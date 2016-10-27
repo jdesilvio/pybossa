@@ -45,6 +45,8 @@ class TaskRun(db.Model, DomainObject):
     user_ip = Column(Text)
     #: UTC timestamp for when TaskRun is saved to DB.
     finish_time = Column(Text, default=make_timestamp)
+    #: UTC timestamp for when TaskRun is saved to memory
+    saved = Column(Text, nullable=True)
     timeout = Column(Integer)
     calibration = Column(Integer)
     #: External User ID
