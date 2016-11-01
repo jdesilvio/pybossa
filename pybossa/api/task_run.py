@@ -40,7 +40,7 @@ class TaskRunAPI(APIBase):
     """Class API for domain object TaskRun."""
 
     __class__ = TaskRun
-    reserved_keys = set(['id', 'created', 'finish_time'])
+    reserved_keys = set(['id'])
 
     def _update_object(self, taskrun):
         """Update task_run object with user id or ip."""
@@ -50,7 +50,6 @@ class TaskRunAPI(APIBase):
         self._validate_project_and_task(taskrun, task)
         self._ensure_task_was_requested(task, guard)
         self._add_user_info(taskrun)
-        self._add_created_timestamp(taskrun, task, guard)
 
     def _forbidden_attributes(self, data):
         for key in data.keys():
