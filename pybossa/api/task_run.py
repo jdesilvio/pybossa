@@ -77,6 +77,3 @@ class TaskRunAPI(APIBase):
             taskrun.user_ip = request.remote_addr
         else:
             taskrun.user_id = current_user.id
-
-    def _add_created_timestamp(self, taskrun, task, guard):
-        taskrun.created = guard.retrieve_timestamp(task, get_user_id_or_ip())
