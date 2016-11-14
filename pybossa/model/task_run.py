@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2013 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -18,10 +18,9 @@
 
 from sqlalchemy import Integer, Text
 from sqlalchemy.schema import Column, ForeignKey
-from sqlalchemy.dialects.postgresql import JSON
 
 from pybossa.core import db
-from pybossa.model import DomainObject, make_timestamp
+from pybossa.model import DomainObject, JSONType, make_timestamp
 
 
 
@@ -32,7 +31,7 @@ class TaskRun(db.Model, DomainObject):
 
     #: ID of the TaskRun
     id = Column(Integer, primary_key=True)
-    #: UTC timestamp for when TaskRun is delivered to user.
+    #: UTC timestamp for when TaskRun is created.
     created = Column(Text, default=make_timestamp)
     #: Project.id of the project associated with this TaskRun.
     project_id = Column(Integer, ForeignKey('project.id'), nullable=False)
@@ -43,14 +42,11 @@ class TaskRun(db.Model, DomainObject):
     user_id = Column(Integer, ForeignKey('user.id'))
     #: User.ip of the user contributing the TaskRun (only if anonymous)
     user_ip = Column(Text)
-    #: UTC timestamp for when TaskRun is saved to DB.
     finish_time = Column(Text, default=make_timestamp)
     timeout = Column(Integer)
     calibration = Column(Integer)
-    #: External User ID
-    external_uid = Column(Text)
     #: Value of the answer.
-    info = Column(JSON)
+    info = Column(JSONType, default=dict)
     '''General writable field that should be used by clients to record results\
     of a TaskRun. Usually a template for this will be provided by Task
     For example::

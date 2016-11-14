@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2013 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -27,17 +27,13 @@ from pybossa.util import get_user_signup_method
 
 blueprint = Blueprint('twitter', __name__)
 
-NO_LOGIN = 'no_login'
-
 
 @blueprint.route('/', methods=['GET', 'POST'])
 def login():  # pragma: no cover
     """Login with Twitter."""
     next_url = request.args.get("next")
-    no_login = request.args.get(NO_LOGIN)
     return twitter.oauth.authorize(callback=url_for('.oauth_authorized',
-                                                    next=next_url,
-                                                    no_login=no_login))
+                                                    next=next_url))
 
 
 @twitter.oauth.tokengetter
@@ -51,7 +47,8 @@ def get_twitter_token():  # pragma: no cover
 
 
 @blueprint.route('/oauth-authorized')
-def oauth_authorized():  # pragma: no cover
+@twitter.oauth.authorized_handler
+def oauth_authorized(resp):  # pragma: no cover
     """Called after authorization.
 
     After this function finished handling,
@@ -67,7 +64,6 @@ def oauth_authorized():  # pragma: no cover
     the application submitted. Note that Twitter itself does not really
     redirect back unless the user clicks on the application name.
     """
-    resp = twitter.oauth.authorized_response()
     next_url = request.args.get('next') or url_for('home.home')
     if resp is None:
         flash(u'You denied the request to sign in.', 'error')
@@ -80,13 +76,11 @@ def oauth_authorized():  # pragma: no cover
     access_token = dict(oauth_token=resp['oauth_token'],
                         oauth_token_secret=resp['oauth_token_secret'])
 
-    no_login = int(request.args.get(NO_LOGIN, 0))
-    if no_login == 1:
-        return manage_user_no_login(access_token, next_url)
-
     user_data = dict(screen_name=resp['screen_name'],
                      user_id=resp['user_id'])
+
     user = manage_user(access_token, user_data)
+
     return manage_user_login(user, user_data, next_url)
 
 
@@ -95,24 +89,24 @@ def manage_user(access_token, user_data):
     # Twitter API does not provide a way
     # to get the e-mail so we will ask for it
     # only the first time
-    info = dict(twitter_token=access_token)
-
     user = user_repo.get_by(twitter_user_id=user_data['user_id'])
 
     if user is not None:
-        user.info['twitter_token'] = access_token
-        user_repo.save(user)
         return user
 
+    twitter_token = dict(oauth_token=access_token['oauth_token'],
+                         oauth_token_secret=access_token['oauth_token_secret'])
+    info = dict(twitter_token=twitter_token)
     user = user_repo.get_by_name(user_data['screen_name'])
+
     if user is not None:
         return None
 
     user = User(fullname=user_data['screen_name'],
-                name=user_data['screen_name'],
-                email_addr=user_data['screen_name'],
-                twitter_user_id=user_data['user_id'],
-                info=info)
+           name=user_data['screen_name'],
+           email_addr=user_data['screen_name'],
+           twitter_user_id=user_data['user_id'],
+           info=info)
     user_repo.save(user)
     return user
 
@@ -139,11 +133,3 @@ def manage_user_login(user, user_data, next_url):
     else:
         flash("Please update your e-mail address in your profile page")
         return redirect(url_for('account.update_profile', name=user.name))
-
-
-def manage_user_no_login(access_token, next_url):
-    if current_user.is_authenticated():
-        user = user_repo.get(current_user.id)
-        user.info['twitter_token'] = access_token
-        user_repo.save(user)
-    return redirect(next_url)

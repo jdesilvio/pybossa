@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2013 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -38,8 +38,8 @@ from rq import Queue
 
 import pybossa.model as model
 from flask.ext.babel import gettext
-from pybossa.core import signer, uploader, sentinel, newsletter
-from pybossa.util import Pagination
+from pybossa.core import signer, uploader, sentinel, newsletter, twofactor_auth
+from pybossa.util import Pagination, admin_required
 from pybossa.util import get_user_signup_method
 from pybossa.cache import users as cached_users
 from pybossa.auth import ensure_authorized_to
@@ -48,12 +48,18 @@ from pybossa.core import user_repo
 from pybossa.feed import get_update_feed
 
 from pybossa.forms.account_view_forms import *
-
+from otpauth import OtpAuth
+import os
+import base64
 
 blueprint = Blueprint('account', __name__)
 
 mail_queue = Queue('super', connection=sentinel.master)
 
+# dictionary comprising OtpAuth objects for each user
+# the objects are created at the time of otp generation. 
+# and destroyed upon otp validation. 
+otpauths = {}
 
 @blueprint.route('/', defaults={'page': 1})
 @blueprint.route('/page/<int:page>')
@@ -74,7 +80,7 @@ def index(page):
     if current_user.is_authenticated():
         user_id = current_user.id
     else:
-        user_id = None
+        user_id = 'anonymous'
     top_users = cached_users.get_leaderboard(current_app.config['LEADERBOARD'],
                                              user_id)
     return render_template('account/index.html', accounts=accounts,
@@ -83,7 +89,62 @@ def index(page):
                            title="Community", pagination=pagination,
                            update_feed=update_feed)
 
-
+        
+def _email_two_factor_auth(user):
+    # send email to user that has details on
+    # how to apply TOTP to login to pybossa
+    if user and user.email_addr:
+        msg = dict(subject='One time password generation details for Pybossa',
+                   recipients=[user.email_addr])
+        msg['body'] = render_template(
+            '/account/email/otp.md',
+            user=user)
+        otpauths[user.email_addr] =  None
+        otpauths[user.email_addr] =  OtpAuth(base64.b32encode(os.urandom(10)).decode('utf-8'))
+        otpsecret = otpauths[user.email_addr]
+        if otpsecret is None:
+            flash(gettext("Problem with generating one time password"), 'error')
+        else:
+            otpcode = otpsecret.totp(period=600) # otp valid for 10 mins
+            print '********** OTP code generated before sending email: %r' % otpcode
+            msg['html'] = render_template(
+                                '/account/email/otp.html',
+                                user=user, otpcode=otpcode)
+            mail_queue.enqueue(send_mail, msg)
+            flash(gettext("An email has been sent to you with one time password"),'success')
+    else:
+        flash(gettext("We don't have this email in our records. "
+                      "You may have signed up with a different "
+                      "email or used Twitter, Facebook, or "
+                      "Google to sign-in"), 'error')
+                      
+@blueprint.route('/<email>/otpvalidation', methods=['GET', 'POST'])  
+def otpvalidation(email):
+    print '********** inside otpvalidation. request: %r' % request
+    form = OTPForm(request.form)
+    otp = int(form.otp.data)
+    print '************ user email: %r' % email
+    user = user_repo.get_by(email_addr=email)
+    if request.method == 'POST' and form.validate():
+        if otpauths.get(email) is not None:
+            otpsecret = otpauths[email]
+            if (otpsecret.valid_totp(otp, period=600)):
+                # user provided valid otp, signin user
+                msg = gettext("OTP verified. You are logged in to the system")
+                flash(msg, 'note')
+                _sign_in_user(user)
+                return redirect(url_for("home.home"))
+            else:
+                # invalid otp
+                msg = gettext("Invalid one time password")
+                flash(msg, 'error')
+        _email_two_factor_auth(user)
+        otpform = OTPForm(request.form)
+    return render_template('/account/otpvalidation.html', 
+                title="Verify OTP", 
+                form=form,
+                user=user)                
+        
 @blueprint.route('/signin', methods=['GET', 'POST'])
 def signin():
     """
@@ -98,9 +159,17 @@ def signin():
         email = form.email.data
         user = user_repo.get_by(email_addr=email)
         if user and user.check_password(password):
-            msg_1 = gettext("Welcome back") + " " + user.fullname
-            flash(msg_1, 'success')
-            return _sign_in_user(user)
+            if twofactor_auth == False:
+                msg_1 = gettext("Welcome back") + " " + user.fullname
+                flash(msg_1, 'success')
+                return _sign_in_user(user)
+            else:
+                _email_two_factor_auth(user)
+                otpform = OTPForm(request.form)
+                return render_template('/account/otpvalidation.html', 
+                                title="Verify OTP", 
+                                form=otpform,
+                                user=user)
         elif user:
             msg, method = get_user_signup_method(user)
             if method == 'local':
@@ -190,6 +259,8 @@ def confirm_email():
 
 
 @blueprint.route('/register', methods=['GET', 'POST'])
+@login_required
+@admin_required
 def register():
     """
     Register method for creating a PyBossa account.
@@ -250,7 +321,7 @@ def newsletter_subscribe():
 
 @blueprint.route('/register/confirmation', methods=['GET'])
 def confirm_account():
-    """Confirm account endpoint."""
+    """Confir account endpoint."""
     key = request.args.get('key')
     if key is None:
         abort(403)
@@ -273,8 +344,10 @@ def _create_account(user_data):
                                valid_email=True)
     new_user.set_password(user_data['password'])
     user_repo.save(new_user)
-    flash(gettext('Thanks for signing-up'), 'success')
-    return _sign_in_user(new_user)
+    flash(gettext('Created user succesfully!'), 'success')
+    return redirect(url_for("home.home"))
+    #flash(gettext('Thanks for signing-up'), 'success')
+    #return _sign_in_user(new_user)
 
 
 def _update_user_with_valid_email(user, email_addr):
@@ -316,8 +389,8 @@ def _show_public_profile(user):
     projects_contributed = cached_users.projects_contributed_cached(user.id)
     projects_created = cached_users.published_projects_cached(user.id)
     if current_user.is_authenticated() and current_user.admin:
-        draft_projects = cached_users.draft_projects(user.id)
-        projects_created.extend(draft_projects)
+        projects_hidden = cached_users.hidden_projects(user.id)
+        projects_created.extend(projects_hidden)
     title = "%s &middot; User Profile" % user_dict['fullname']
     return render_template('/account/public_profile.html',
                            title=title,
@@ -333,6 +406,7 @@ def _show_own_profile(user):
     user.total = cached_users.get_total_users()
     projects_contributed = cached_users.projects_contributed_cached(user.id)
     projects_published, projects_draft = _get_user_projects(user.id)
+    projects_published.extend(cached_users.hidden_projects(user.id))
     cached_users.get_user_summary(user.name)
 
     return render_template('account/profile.html', title=gettext("Profile"),
@@ -360,6 +434,7 @@ def projects(name):
 
     user = user_repo.get(current_user.id)
     projects_published, projects_draft = _get_user_projects(user.id)
+    projects_published.extend(cached_users.hidden_projects(user.id))
 
     return render_template('account/projects.html',
                            title=gettext("Projects"),
@@ -392,43 +467,31 @@ def update_profile(name):
     # Extend the values
     user.rank = usr.get('rank')
     user.score = usr.get('score')
-    if request.form.get('btn') != 'Profile':
-        update_form = UpdateProfileForm(formdata=None, obj=user)
-    else:
-        update_form = UpdateProfileForm(obj=user)
+    # Creation of forms
+    update_form = UpdateProfileForm(obj=user)
     update_form.set_locales(current_app.config['LOCALES'])
     avatar_form = AvatarUploadForm()
     password_form = ChangePasswordForm()
 
-    title_msg = "Update your profile: %s" % user.fullname
-
     if request.method == 'POST':
         # Update user avatar
-        succeed = False
         if request.form.get('btn') == 'Upload':
-            succeed = _handle_avatar_update(user, avatar_form)
+            _handle_avatar_update(user, avatar_form)
         # Update user profile
         elif request.form.get('btn') == 'Profile':
-            succeed = _handle_profile_update(user, update_form)
+            _handle_profile_update(user, update_form)
         # Update user password
         elif request.form.get('btn') == 'Password':
-            succeed = _handle_password_update(user, password_form)
+            _handle_password_update(user, password_form)
         # Update user external services
         elif request.form.get('btn') == 'External':
-            succeed = _handle_external_services_update(user, update_form)
+            _handle_external_services_update(user, update_form)
         # Otherwise return 415
         else:
             return abort(415)
-        if succeed:
-            return redirect(url_for('.update_profile', name=user.name))
-        else:
-            return render_template('/account/update.html',
-                                   form=update_form,
-                                   upload_form=avatar_form,
-                                   password_form=password_form,
-                                   title=title_msg,
-                                   show_passwd_form=show_passwd_form)
+        return redirect(url_for('.update_profile', name=user.name))
 
+    title_msg = "Update your profile: %s" % user.fullname
     return render_template('/account/update.html',
                            form=update_form,
                            upload_form=avatar_form,
@@ -457,15 +520,13 @@ def _handle_avatar_update(user, avatar_form):
         cached_users.delete_user_summary(user.name)
         flash(gettext('Your avatar has been updated! It may \
                       take some minutes to refresh...'), 'success')
-        return True
     else:
         flash("You have to provide an image file to update your avatar", "error")
-        return False
 
 
 def _handle_profile_update(user, update_form):
     acc_conf_dis = current_app.config.get('ACCOUNT_CONFIRMATION_DISABLED')
-    if update_form.validate_on_submit():
+    if update_form.validate():
         user.id = update_form.id.data
         user.fullname = update_form.fullname.data
         user.name = update_form.name.data
@@ -491,7 +552,6 @@ def _handle_profile_update(user, update_form):
                           new email: %s. Once you verify it, it will \
                           be updated.' % account['email_addr'])
             flash(fls, 'info')
-            return True
         if acc_conf_dis:
             user.email_addr = update_form.email_addr.data
         user.privacy_mode = update_form.privacy_mode.data
@@ -500,10 +560,8 @@ def _handle_profile_update(user, update_form):
         user_repo.update(user)
         cached_users.delete_user_summary(user.name)
         flash(gettext('Your profile has been updated!'), 'success')
-        return True
     else:
         flash(gettext('Please correct the errors'), 'error')
-        return False
 
 
 def _handle_password_update(user, password_form):
@@ -514,15 +572,12 @@ def _handle_password_update(user, password_form):
             user_repo.update(user)
             flash(gettext('Yay, you changed your password succesfully!'),
                   'success')
-            return True
         else:
             msg = gettext("Your current password doesn't match the "
                           "one in our records")
             flash(msg, 'error')
-            return False
     else:
         flash(gettext('Please correct the errors'), 'error')
-        return False
 
 
 def _handle_external_services_update(user, update_form):
@@ -535,10 +590,8 @@ def _handle_external_services_update(user, update_form):
         user_repo.update(user)
         cached_users.delete_user_summary(user.name)
         flash(gettext('Your profile has been updated!'), 'success')
-        return True
     else:
         flash(gettext('Please correct the errors'), 'error')
-        return False
 
 
 @blueprint.route('/reset-password', methods=['GET', 'POST'])

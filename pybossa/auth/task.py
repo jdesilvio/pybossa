@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2013 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -18,15 +18,9 @@
 
 
 class TaskAuth(object):
-    _specific_actions = []
 
-    def __init__(self, project_repo, result_repo):
+    def __init__(self, project_repo):
         self.project_repo = project_repo
-        self.result_repo = result_repo
-
-    @property
-    def specific_actions(self):
-        return self._specific_actions
 
     def can(self, user, action, task=None):
         action = ''.join(['_', action])
@@ -42,8 +36,6 @@ class TaskAuth(object):
         return self._only_admin_or_owner(user, task)
 
     def _delete(self, user, task):
-        if self.result_repo.get_by(task_id=task.id, project_id=task.project_id):
-            return False
         return self._only_admin_or_owner(user, task)
 
     def _only_admin_or_owner(self, user, task):

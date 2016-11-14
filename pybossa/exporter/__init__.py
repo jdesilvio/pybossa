@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2014 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -45,9 +45,10 @@ class Exporter(object):
             assert zlib
             zip_compression= zipfile.ZIP_DEFLATED
         except Exception as ex:
+            print ex
             zip_compression= zipfile.ZIP_STORED
-        _zip = zipfile.ZipFile(file=filename, mode='w', compression=zip_compression, allowZip64=True)
-        return _zip
+        zip = zipfile.ZipFile(file=filename, mode='w', compression=zip_compression, allowZip64=True)
+        return zip
 
     def _make_zip(self, project, ty):
         """Generate a ZIP of a certain type and upload it"""
@@ -65,12 +66,12 @@ class Exporter(object):
             filepath = container
         return filepath
 
-    def download_name(self, project, ty, _format):
+    def download_name(self, project, ty, format):
         """Get the filename (without) path of the file which should be downloaded.
            This function does not check if this filename actually exists!"""
         # TODO: Check if ty is valid
         name = self._project_name_latin_encoded(project)
-        filename = '%s_%s_%s_%s.zip' % (str(project.id), name, ty, _format)  # Example: 123_feynman_tasks_json.zip
+        filename = '%s_%s_%s_%s.zip' % (str(project.id), name, ty, format)  # Example: 123_feynman_tasks_json.zip
         filename = secure_filename(filename)
         return filename
 
@@ -80,13 +81,18 @@ class Exporter(object):
         filename = self.download_name(project, ty)
         return uploader.file_exists(filename, self._container(project))
 
-    def get_zip(self, project, ty):
-        """Get a ZIP file directly from uploaded directory
-        or generate one on the fly and upload it if not existing."""
+    def delete_existing_zip(self, project, ty):
+        """Delete existing ZIP from uploaded directory"""
         filename = self.download_name(project, ty)
-        if not self.zip_existing(project, ty):
-            print "Warning: Generating %s on the fly now!" % filename
-            self._make_zip(project, ty)
+        if uploader.file_exists(filename, self._container(project)):
+            uploader.delete_file(filename, self._container(project))
+        
+    def get_zip(self, project, ty):
+        """Delete existing ZIP file directly from uploaded directory
+        and generate one on the fly and upload it."""
+        filename = self.download_name(project, ty)
+        self.delete_existing_zip(project, ty)
+        self._make_zip(project, ty)    
         if isinstance(uploader, local.LocalUploader):
             filepath = self._download_path(project)
             res = send_file(filename_or_fp=safe_join(filepath, filename),

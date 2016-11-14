@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2015 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -23,6 +23,7 @@ import codecs
 import cStringIO
 from flask import abort, request, make_response, current_app
 from functools import wraps
+from flask_oauthlib.client import OAuth
 from flask.ext.login import current_user
 from math import ceil
 import json
@@ -41,7 +42,6 @@ def jsonpify(f):
             return f(*args, **kwargs)
     return decorated_function
 
-
 def admin_required(f):  # pragma: no cover
     """Check if the user is and admin or not."""
     @wraps(f)
@@ -52,7 +52,16 @@ def admin_required(f):  # pragma: no cover
             return abort(403)
     return decorated_function
 
-
+def admin_or_subadmin_required(f):  # pragma: no cover
+    """Check if the user is and admin or not."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if current_user.admin or current_user.subadmin:
+            return f(*args, **kwargs)
+        else:
+            return abort(403)
+    return decorated_function
+    
 # from http://flask.pocoo.org/snippets/56/
 def crossdomain(origin=None, methods=None, headers=None,
                 max_age=21600, attach_to_all=True,
@@ -192,6 +201,75 @@ class Pagination(object):
                 last = num
 
 
+class Twitter(object):
+
+    """Class Twitter to enable Twitter signin."""
+
+    def __init__(self, app=None):
+        """Init method."""
+        self.app = app
+        if app is not None:  # pragma: no cover
+            self.init_app(app)
+
+    def init_app(self, app):
+        """Init app using factories."""
+        self.oauth = OAuth().remote_app(
+            'twitter',
+            base_url='https://api.twitter.com/1/',
+            request_token_url='https://api.twitter.com/oauth/request_token',
+            access_token_url='https://api.twitter.com/oauth/access_token',
+            authorize_url='https://api.twitter.com/oauth/authenticate',
+            consumer_key=app.config['TWITTER_CONSUMER_KEY'],
+            consumer_secret=app.config['TWITTER_CONSUMER_SECRET'])
+
+
+class Facebook(object):
+
+    """Class Facebook to enable Facebook signin."""
+
+    def __init__(self, app=None):
+        """Init method."""
+        self.app = app
+        if app is not None:  # pragma: no cover
+            self.init_app(app)
+
+    def init_app(self, app):
+        """Init app using factories pattern."""
+        self.oauth = OAuth().remote_app(
+            'facebook',
+            base_url='https://graph.facebook.com/',
+            request_token_url=None,
+            access_token_url='/oauth/access_token',
+            authorize_url='https://www.facebook.com/dialog/oauth',
+            consumer_key=app.config['FACEBOOK_APP_ID'],
+            consumer_secret=app.config['FACEBOOK_APP_SECRET'],
+            request_token_params={'scope': 'email'})
+
+
+class Google(object):
+
+    """Class Google to enable Google signin."""
+
+    def __init__(self, app=None):
+        """Init method."""
+        self.app = app
+        if app is not None:  # pragma: no cover
+            self.init_app(app)
+
+    def init_app(self, app):
+        """Init app using factories pattern."""
+        self.oauth = OAuth().remote_app(
+            'google',
+            base_url='https://www.googleapis.com/oauth2/v1/',
+            authorize_url='https://accounts.google.com/o/oauth2/auth',
+            request_token_url=None,
+            request_token_params={'scope': 'https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email'},
+            access_token_url='https://accounts.google.com/o/oauth2/token',
+            access_token_method='POST',
+            consumer_key=app.config['GOOGLE_CLIENT_ID'],
+            consumer_secret=app.config['GOOGLE_CLIENT_SECRET'])
+
+
 def unicode_csv_reader(unicode_csv_data, dialect=csv.excel, **kwargs):
     """Unicode CSV reader."""
     # This code is taken from http://docs.python.org/library/csv.html#examples
@@ -250,32 +328,26 @@ class UnicodeWriter:
 def get_user_signup_method(user):
     """Return which OAuth sign up method the user used."""
     msg = u'Sorry, there is already an account with the same e-mail.'
-    if user.info:
-        # Google
-        if user.info.get('google_token'):
-            msg += " <strong>It seems like you signed up with your Google account.</strong>"
-            msg += "<br/>You can try and sign in by clicking in the Google button."
-            return (msg, 'google')
-        # Facebook
-        elif user.info.get('facebook_token'):
-            msg += " <strong>It seems like you signed up with your Facebook account.</strong>"
-            msg += "<br/>You can try and sign in by clicking in the Facebook button."
-            return (msg, 'facebook')
-        # Twitter
-        elif user.info.get('twitter_token'):
-            msg += " <strong>It seems like you signed up with your Twitter account.</strong>"
-            msg += "<br/>You can try and sign in by clicking in the Twitter button."
-            return (msg, 'twitter')
-        # Local account
-        else:
-            msg += " <strong>It seems that you created an account locally.</strong>"
-            msg += " <br/>You can reset your password if you don't remember it."
-            return (msg, 'local')
+    # Google
+    if user.info.get('google_token'):
+        msg += " <strong>It seems like you signed up with your Google account.</strong>"
+        msg += "<br/>You can try and sign in by clicking in the Google button."
+        return (msg, 'google')
+    # Facebook
+    elif user.info.get('facebook_token'):
+        msg += " <strong>It seems like you signed up with your Facebook account.</strong>"
+        msg += "<br/>You can try and sign in by clicking in the Facebook button."
+        return (msg, 'facebook')
+    # Twitter
+    elif user.info.get('twitter_token'):
+        msg += " <strong>It seems like you signed up with your Twitter account.</strong>"
+        msg += "<br/>You can try and sign in by clicking in the Twitter button."
+        return (msg, 'twitter')
+    # Local account
     else:
         msg += " <strong>It seems that you created an account locally.</strong>"
         msg += " <br/>You can reset your password if you don't remember it."
         return (msg, 'local')
-
 
 
 def get_port():
@@ -392,13 +464,3 @@ def _points_by_interval(value, weight=1):
     if value > 0:
         return 1 * weight
     return 0
-
-
-def publish_channel(sentinel, project_short_name, data, type, private=True):
-    """Publish in a channel some JSON data as a string."""
-    if private:
-        channel = "channel_%s_%s" % ("private", project_short_name)
-    else:
-        channel = "channel_%s_%s" % ("public", project_short_name)
-    msg = dict(type=type, data=data)
-    sentinel.master.publish(channel, json.dumps(msg))

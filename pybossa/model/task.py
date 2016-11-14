@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2013 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -19,10 +19,10 @@
 from sqlalchemy import Integer, Boolean, Float, UnicodeText, Text
 from sqlalchemy.schema import Column, ForeignKey
 from sqlalchemy.orm import relationship, backref
-from sqlalchemy.dialects.postgresql import JSON
 
 from pybossa.core import db
-from pybossa.model import DomainObject, make_timestamp
+from pybossa.model import DomainObject, JSONType, JSONEncodedDict, \
+    make_timestamp
 from pybossa.model.task_run import TaskRun
 
 
@@ -47,9 +47,11 @@ class Task(db.Model, DomainObject):
     #: Priority of the task from 0.0 to 1.0
     priority_0 = Column(Float, default=0)
     #: Task.info field in JSON with the data for the task.
-    info = Column(JSON)
+    info = Column(JSONType, default=dict)
     #: Number of answers to collect for this task.
     n_answers = Column(Integer, default=30)
+    #: completed task can be marked as exported=True after its exported
+    exported = Column(Boolean, default=False)
 
     task_runs = relationship(TaskRun, cascade='all, delete, delete-orphan', backref='task')
 

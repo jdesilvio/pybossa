@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2014 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -22,10 +22,8 @@ This package adds GET, POST, PUT and DELETE methods for:
     * tasks
 
 """
-from flask import abort
 from werkzeug.exceptions import BadRequest
 from pybossa.model.task import Task
-from pybossa.core import result_repo
 from api_base import APIBase
 
 
@@ -40,7 +38,3 @@ class TaskAPI(APIBase):
         for key in data.keys():
             if key in self.reserved_keys:
                 raise BadRequest("Reserved keys in payload")
-
-    def _update_attribute(self, new, old):
-        if (new.state == 'completed') and (old.n_answers <= new.n_answers):
-            new.state = 'ongoing'

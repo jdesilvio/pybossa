@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2014 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -17,7 +17,6 @@
 # along with PyBossa.  If not, see <http://www.gnu.org/licenses/>.
 
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import cast, Date
 
 from pybossa.model.project import Project
 from pybossa.model.category import Category
@@ -44,23 +43,9 @@ class ProjectRepository(object):
     def get_all(self):
         return self.db.session.query(Project).all()
 
-    def filter_by(self, limit=None, offset=0, yielded=False, last_id=None,
-                  fulltextsearch=None, desc=False, **filters):
-        if filters.get('owner_id'):
-            filters['owner_id'] = filters.get('owner_id')
+    def filter_by(self, limit=None, offset=0, **filters):
         query = self.db.session.query(Project).filter_by(**filters)
-        if last_id:
-            query = query.filter(Project.id > last_id)
-            query = query.order_by(Project.id).limit(limit)
-        else:
-            if desc:
-                query = query.order_by(cast(Project.updated, Date).desc())\
-                        .limit(limit).offset(offset)
-            else:
-                query = query.order_by(Project.id).limit(limit).offset(offset)
-        if yielded:
-            limit = limit or 1
-            return query.yield_per(limit)
+        query = query.order_by(Project.id).limit(limit).offset(offset)
         return query.all()
 
     def save(self, project):
@@ -107,20 +92,9 @@ class ProjectRepository(object):
     def get_all_categories(self):
         return self.db.session.query(Category).all()
 
-    def filter_categories_by(self, limit=None, offset=0, yielded=False,
-                             last_id=None, fulltextsearch=None,
-                             desc=False, **filters):
-        if filters.get('owner_id'):
-            del filters['owner_id']
+    def filter_categories_by(self, limit=None, offset=0, **filters):
         query = self.db.session.query(Category).filter_by(**filters)
-        if last_id:
-            query = query.filter(Category.id > last_id)
-            query = query.order_by(Category.id).limit(limit)
-        else:
-            query = query.order_by(Category.id).limit(limit).offset(offset)
-        if yielded:
-            limit = limit or 1
-            return query.yield_per(limit)
+        query = query.order_by(Category.id).limit(limit).offset(offset)
         return query.all()
 
     def save_category(self, category):

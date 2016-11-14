@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2013 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -23,7 +23,8 @@ from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.ext.mutable import MutableDict
 
 from pybossa.core import db, signer
-from pybossa.model import DomainObject, make_timestamp, make_uuid
+
+from pybossa.model import DomainObject, JSONEncodedDict, make_timestamp
 from pybossa.model.task import Task
 from pybossa.model.task_run import TaskRun
 from pybossa.model.category import Category
@@ -54,20 +55,23 @@ class Project(db.Model, DomainObject):
     webhook = Column(Text)
     #: If the project allows anonymous contributions
     allow_anonymous_contributors = Column(Boolean, default=True)
-    #: If the project is published
-    published = Column(Boolean, nullable=False, default=False)
+    long_tasks = Column(Integer, default=0)
+    #: If the project is hidden
+    hidden = Column(Integer, default=0)
     # If the project is featured
     featured = Column(Boolean, nullable=False, default=False)
-    # Secret key for project
-    secret_key = Column(Text, default=make_uuid)
     # If the project owner has been emailed
     contacted = Column(Boolean, nullable=False, default=False)
     #: Project owner_id
     owner_id = Column(Integer, ForeignKey('user.id'), nullable=False)
+    time_estimate = Column(Integer, default=0)
+    time_limit = Column(Integer, default=0)
+    calibration_frac = Column(Float, default=60.0)
+    bolt_course_id = Column(Integer, default=0)
     #: Project Category
     category_id = Column(Integer, ForeignKey('category.id'), nullable=False)
     #: Project info field formatted as JSON
-    info = Column(MutableDict.as_mutable(JSON), default=dict())
+    info = Column(JSONEncodedDict, default=dict)
 
     tasks = relationship(Task, cascade='all, delete, delete-orphan', backref='project')
     task_runs = relationship(TaskRun, backref='project',
@@ -110,6 +114,3 @@ class Project(db.Model, DomainObject):
 
     def delete_autoimporter(self):
         del self.info['autoimporter']
-
-    def has_presenter(self):
-        return self.info.get('task_presenter') not in ('', None)

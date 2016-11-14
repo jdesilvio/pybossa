@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2013 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -27,51 +27,42 @@ class Hateoas(object):
         """Return hateoas link."""
         return "<link rel='%s' title='%s' href='%s'/>" % (rel, title, href)
 
-    def create_link(self, item_id, title, rel='self'):
+    def create_link(self, item, rel='self'):
         """Create hateoas link."""
-        # title = item.__class__.__name__.lower()
+        title = item.__class__.__name__.lower()
         method = ".api_%s" % title
-        href = url_for(method, oid=item_id, _external=True)
+        href = url_for(method, oid=item.id, _external=True)
         return self.link(rel, title, href)
 
     def create_links(self, item):
         """Create Hateoas links."""
         cls = item.__class__.__name__.lower()
         links = []
-        if cls == 'result':
-            link = self. create_link(item.id, title='result')
-            if item.project_id is not None:
-                links.append(self.create_link(item.project_id, title='project',
-                                              rel='parent'))
-            if item.task_id is not None:
-                links.append(self.create_link(item.task_id, title='task',
-                                              rel='parent'))
-            return links, link
-        elif cls == 'taskrun':
-            link = self.create_link(item.id, title='taskrun')
-            if item.project_id is not None:
-                links.append(self.create_link(item.project_id,
-                                              title='project', rel='parent'))
-            if item.task_id is not None:
-                links.append(self.create_link(item.task_id,
-                                              title='task', rel='parent'))
+        if cls == 'taskrun':
+            link = self.create_link(item)
+            try:
+                if item.project_id is not None:
+                    links.append(self.create_link(item.project, rel='parent'))
+                if item.task_id is not None:
+                    links.append(self.create_link(item.task, rel='parent'))
+            except:
+                links = None
+                pass
             return links, link
         elif cls == 'task':
-            link = self.create_link(item.id, title='task')
+            link = self.create_link(item)
             if item.project_id is not None:
-                links = [self.create_link(item.project_id,
-                                          title='project', rel='parent')]
+                links = [self.create_link(item.project, rel='parent')]
             return links, link
         elif cls == 'category':
-            return None, self.create_link(item.id, title='category')
+            return None, self.create_link(item)
         elif cls == 'project':
-            link = self.create_link(item.id, title='project')
+            link = self.create_link(item)
             if item.category_id is not None:
-                links.append(self.create_link(item.category_id,
-                                              title='category', rel='category'))
+                links.append(self.create_link(item.category, rel='category'))
             return links, link
         elif cls == 'user':
-            link = self.create_link(item.id, title='user')
+            link = self.create_link(item)
             # TODO: add the projects created by the user as the
             # links with rel=? (maybe 'project'??)
             return None, link

@@ -1,7 +1,7 @@
 # -* -coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2013 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -15,6 +15,9 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with PyBossa.  If not, see <http://www.gnu.org/licenses/>.
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
 """Admin view for PyBossa."""
 from rq import Queue
 from flask import Blueprint
@@ -44,8 +47,6 @@ import json
 from StringIO import StringIO
 
 from pybossa.forms.admin_view_forms import *
-from pybossa.news import NOTIFY_ADMIN
-
 
 blueprint = Blueprint('admin', __name__)
 
@@ -63,10 +64,18 @@ def format_error(msg, status_code):
 @login_required
 @admin_required
 def index():
-    """List admin actions."""
-    key = NOTIFY_ADMIN + str(current_user.id)
-    sentinel.master.delete(key)
-    return render_template('/admin/index.html')
+	"""List admin actions."""
+	categories = cached_cat.get_all()
+	projects = {}
+	for c in categories:
+		n_projects = cached_projects.n_count(category=c.short_name)
+		projects[c.short_name] = cached_projects.get(
+			category=c.short_name,
+			page=1,
+			per_page=n_projects)
+	return render_template('/admin/index.html',
+						   projects=projects,
+						   categories=categories)
 
 
 @blueprint.route('/featured')
@@ -379,8 +388,7 @@ def dashboard():
             flash(msg)
         active_users_last_week = dashb.format_users_week()
         active_anon_last_week = dashb.format_anon_week()
-        draft_projects_last_week = dashb.format_draft_projects()
-        published_projects_last_week = dashb.format_published_projects()
+        new_projects_last_week = dashb.format_new_projects()
         update_projects_last_week = dashb.format_update_projects()
         new_tasks_week = dashb.format_new_tasks()
         new_task_runs_week = dashb.format_new_task_runs()
@@ -388,20 +396,18 @@ def dashboard():
         returning_users_week = dashb.format_returning_users()
         update_feed = get_update_feed()
 
-        return render_template(
-            'admin/dashboard.html',
-            title=gettext('Dashboard'),
-            active_users_last_week=active_users_last_week,
-            active_anon_last_week=active_anon_last_week,
-            draft_projects_last_week=draft_projects_last_week,
-            published_projects_last_week=published_projects_last_week,
-            update_projects_last_week=update_projects_last_week,
-            new_tasks_week=new_tasks_week,
-            new_task_runs_week=new_task_runs_week,
-            new_users_week=new_users_week,
-            returning_users_week=returning_users_week,
-            update_feed=update_feed,
-            wait=False)
+        return render_template('admin/dashboard.html',
+                               title=gettext('Dashboard'),
+                               active_users_last_week=active_users_last_week,
+                               active_anon_last_week=active_anon_last_week,
+                               new_projects_last_week=new_projects_last_week,
+                               update_projects_last_week=update_projects_last_week,
+                               new_tasks_week=new_tasks_week,
+                               new_task_runs_week=new_task_runs_week,
+                               new_users_week=new_users_week,
+                               returning_users_week=returning_users_week,
+                               update_feed=update_feed,
+                               wait=False)
     except ProgrammingError as e:
         return render_template('admin/dashboard.html',
                                title=gettext('Dashboard'),
@@ -409,3 +415,117 @@ def dashboard():
     except Exception as e:  # pragma: no cover
         current_app.logger.error(e)
         return abort(500)
+
+		
+@blueprint.route('/custom_export_tasks<int:proj_id>', methods=['GET', 'POST'])
+#@blueprint.route('/custom_export_tasks', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def custom_export_tasks(proj_id):
+	logging.debug(' ####### Project id: %d', proj_id)
+	from pybossa.core import project_repo
+	project = project_repo.get(proj_id)
+	if project is None:
+		msg = 'Project.id %s not found' % proj_id
+		logging.debug(msg)
+		return redirect(url_for('.index'))
+	from pybossa.core import json_exporter		
+	return json_exporter.create_cust_exp_zip(project)
+
+    
+@blueprint.route('/generate_reports<int:proj_id>', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def generate_reports(proj_id):
+    logging.debug(' ####### generate_reports : Project id: %d', proj_id)
+    from pybossa.core import project_repo
+    project = project_repo.get(proj_id)
+    if project is None:
+        msg = 'Project.id %s not found' % proj_id
+        logging.debug(msg)
+        return redirect(url_for('.index'))
+    #from pybossa.core import golden_reporter
+    #return golden_reporter.generate_reports(project)
+    from pybossa.core import csv_exporter
+    return csv_exporter.generate_goldtask_reports(project)    
+
+@blueprint.route('/subadminusers', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def subadminusers(user_id=None):
+    """Manage subadminusers of PyBossa."""
+    form = SearchForm(request.form)
+    users = [user for user in user_repo.filter_by(subadmin=True)
+             if user.id != current_user.id]
+
+    if request.method == 'POST' and form.user.data:
+        query = form.user.data
+        found = [user for user in user_repo.search_by_name(query)
+                 if user.id != current_user.id]
+        [ensure_authorized_to('update', found_user) for found_user in found]
+        if not found:
+            flash("<strong>Ooops!</strong> We didn't find a user "
+                  "matching your query: <strong>%s</strong>" % form.user.data)
+        return render_template('/admin/subadminusers.html', found=found, users=users,
+                               title=gettext("Manage Subadmin Users"),
+                               form=form)
+
+    return render_template('/admin/subadminusers.html', found=[], users=users,
+                           title=gettext("Manage Subadmin Users"), form=form)
+                           
+                                   
+@blueprint.route('/users/addsubadmin/<int:user_id>')
+@login_required
+@admin_required
+def add_subadmin(user_id=None):
+    """Add subadmin flag for user_id."""
+    try:
+        if user_id:
+            user = user_repo.get(user_id)
+            if user:
+                ensure_authorized_to('update', user)
+                user.subadmin = True
+                user_repo.update(user)
+                return redirect(url_for(".subadminusers"))
+            else:
+                msg = "User not found"
+                return format_error(msg, 404)
+    except Exception as e:  # pragma: no cover
+        current_app.logger.error(e)
+        return abort(500)
+
+
+@blueprint.route('/users/delsubadmin/<int:user_id>')
+@login_required
+@admin_required
+def del_subadmin(user_id=None):
+    """Del admin flag for user_id."""
+    try:
+        if user_id:
+            user = user_repo.get(user_id)
+            if user:
+                ensure_authorized_to('update', user)
+                user.subadmin = False
+                user_repo.update(user)
+                return redirect(url_for('.subadminusers'))
+            else:
+                msg = "User.id not found"
+                return format_error(msg, 404)
+        else:  # pragma: no cover
+            msg = "User.id is missing for method del_admin"
+            return format_error(msg, 415)
+    except Exception as e:  # pragma: no cover
+        current_app.logger.error(e)
+        return abort(500)
+    
+def main(n):
+	app = Flask(__name__)
+	configure_app(app)
+	setup_db(app)
+	print('value of n is : ' %n) 
+	res = custom_export_tasks(n)
+	print(n_answers)
+	
+if __name__ == '__main__':
+	if (sys.argv) > 1:
+		main(int(sys.argv[1]))

@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2013 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -38,10 +38,7 @@ class Unique(object):
         filters = {self.field_name: form_field.data}
         check = self.query_function(**filters)
         if 'id' in form:
-            if check:
-                id = type(check.id)((form.id.data))
-            else:
-                id = int(form.id.data)
+            id = form.id.data
         else:
             id = None
         if check and (id is None or id != check.id):

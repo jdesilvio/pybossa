@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2015 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -18,26 +18,24 @@
 """Core module for PyBossa."""
 import os
 import logging
-import humanize
 from flask import Flask, url_for, request, render_template, \
     flash, _app_ctx_stack
 from flask.ext.login import current_user
 from flask.ext.babel import gettext
-from flask.ext.assets import Bundle
 from pybossa import default_settings as settings
 from pybossa.extensions import *
 from pybossa.ratelimit import get_view_rate_limit
 from raven.contrib.flask import Sentry
 from pybossa.util import pretty_date
-from pybossa.news import FEED_KEY as NEWS_FEED_KEY
-from pybossa.news import get_news
 
 
 def create_app(run_as_server=True):
     """Create web app."""
     app = Flask(__name__)
-    configure_app(app)
-    setup_assets(app)
+    if not os.environ.get('CONFIG_DEV_ONLY'):
+        configure_app(app)
+    else:
+        configure_app_2(app)
     setup_cache_timeouts(app)
     setup_ratelimits(app)
     setup_theme(app)
@@ -67,7 +65,6 @@ def create_app(run_as_server=True):
     setup_debug_toolbar(app)
     setup_jinja2_filters(app)
     setup_newsletter(app)
-    setup_sse(app)
     plugin_manager.init_app(app)
     plugin_manager.install_plugins()
     import pybossa.model.event_listeners
@@ -79,30 +76,76 @@ def configure_app(app):
     app.config.from_object(settings)
     app.config.from_envvar('PYBOSSA_SETTINGS', silent=True)
     # parent directory
+    #import pdb
+    #pdb.set_trace()
+    if not os.environ.get('PYBOSSA_SETTINGS'):  # pragma: no cover
+        here = os.path.dirname(os.path.abspath(__file__))
+        config_path_encr = os.path.join(os.path.dirname(here), 'settings_local.py.encr')
+        if os.path.exists(config_path_encr):  # pragma: no cover
+            # load cred to decrypt 'settings_local.py'
+            pwd = os.environ.get('CONFIG_CRYPT_CRED')
+            if not pwd :
+                log_message = 'CONFIG_CRYPT_CRED not set. unable to decode configuration'
+                app.logger.error(log_message)
+            else:
+                # decrypt config file
+                infile = config_path_encr
+                outfile = os.path.join(os.path.dirname(here), 'settings_local.py')
+                decrypy_cmd = 'openssl enc -aes-256-cbc -d -in ' + infile + \
+                              ' -out ' + outfile + ' -k "' + pwd + '"'
+                ret = os.system(decrypy_cmd)
+                log_message = 'openssl enc -aes-256-cbc -d -in ' + infile + \
+                              ' -out ' + outfile + ' -k ""******". return code: %r' % ret
+                app.logger.error(log_message)
+                if not os.path.exists(outfile):
+                    log_message = 'cannot find file %r' % outfile
+                    app.logger.error(log_message)
+                else:
+                    config_path_decr = outfile
+                    # load decrypted config file
+                    app.config.from_pyfile(config_path_decr)
+                    # Override DB in case of testing
+                    if app.config.get('SQLALCHEMY_DATABASE_TEST_URI'):
+                        app.config['SQLALCHEMY_DATABASE_URI'] = \
+                            app.config['SQLALCHEMY_DATABASE_TEST_URI']
+                    # Enable Slave bind in case is missing using Master node
+                    if app.config.get('SQLALCHEMY_BINDS') is None:
+                        print "Slave binds are misssing, adding Master as slave too."
+                        app.config['SQLALCHEMY_BINDS'] = \
+                            dict(slave=app.config.get('SQLALCHEMY_DATABASE_URI'))
+                    # load config param for setting account creation 
+                    # as admin only operation
+                    global twofactor_auth
+                    twofactor_auth = app.config.get('ENABLE_TWO_FACTOR_AUTH')
+                    # delete decrypted config file
+                    ret = os.system('rm -f ' + config_path_decr)
+                    log_message = 'deleting %r. return code: %r' % (outfile, ret)
+                    app.logger.error(log_message)
+
+def configure_app_2(app):
+    """Configure web app."""
+    app.config.from_object(settings)
+    app.config.from_envvar('PYBOSSA_SETTINGS', silent=True)
+    # parent directory
     if not os.environ.get('PYBOSSA_SETTINGS'):  # pragma: no cover
         here = os.path.dirname(os.path.abspath(__file__))
         config_path = os.path.join(os.path.dirname(here), 'settings_local.py')
         if os.path.exists(config_path):  # pragma: no cover
             app.config.from_pyfile(config_path)
-    # Override DB in case of testing
-    if app.config.get('SQLALCHEMY_DATABASE_TEST_URI'):
-        app.config['SQLALCHEMY_DATABASE_URI'] = \
-            app.config['SQLALCHEMY_DATABASE_TEST_URI']
-    # Enable Slave bind in case is missing using Master node
-    if app.config.get('SQLALCHEMY_BINDS') is None:
-        print "Slave binds are misssing, adding Master as slave too."
-        app.config['SQLALCHEMY_BINDS'] = \
-            dict(slave=app.config.get('SQLALCHEMY_DATABASE_URI'))
-
-
-def setup_sse(app):
-    if app.config['SSE']:
-        msg = "WARNING: async mode is required as Server Sent Events are enabled."
-        app.logger.warning(msg)
-    else:
-        msg = "INFO: async mode is disabled."
-        app.logger.info(msg)
-
+            # Override DB in case of testing
+            if app.config.get('SQLALCHEMY_DATABASE_TEST_URI'):
+                app.config['SQLALCHEMY_DATABASE_URI'] = \
+                    app.config['SQLALCHEMY_DATABASE_TEST_URI']
+            # Enable Slave bind in case is missing using Master node
+            if app.config.get('SQLALCHEMY_BINDS') is None:
+                print "Slave binds are misssing, adding Master as slave too."
+                app.config['SQLALCHEMY_BINDS'] = \
+                    dict(slave=app.config.get('SQLALCHEMY_DATABASE_URI'))
+            # load config param for setting account creation 
+            # as admin only operation
+            global twofactor_auth
+            twofactor_auth = app.config.get('ENABLE_TWO_FACTOR_AUTH')
+            
 
 def setup_theme(app):
     """Configure theme for PyBossa app."""
@@ -133,7 +176,6 @@ def setup_exporter(app):
     from pybossa.exporter.json_export import JsonExporter
     csv_exporter = CsvExporter()
     json_exporter = JsonExporter()
-
 
 def setup_markdown(app):
     """Setup markdown."""
@@ -171,22 +213,16 @@ def setup_repositories():
     from pybossa.repositories import BlogRepository
     from pybossa.repositories import TaskRepository
     from pybossa.repositories import AuditlogRepository
-    from pybossa.repositories import WebhookRepository
-    from pybossa.repositories import ResultRepository
     global user_repo
     global project_repo
     global blog_repo
     global task_repo
     global auditlog_repo
-    global webhook_repo
-    global result_repo
     user_repo = UserRepository(db)
     project_repo = ProjectRepository(db)
     blog_repo = BlogRepository(db)
     task_repo = TaskRepository(db)
     auditlog_repo = AuditlogRepository(db)
-    webhook_repo = WebhookRepository(db)
-    result_repo = ResultRepository(db)
 
 
 def setup_error_email(app):
@@ -237,17 +273,13 @@ def setup_babel(app):
 
     @babel.localeselector
     def _get_locale():
-        locales = [l[0] for l in app.config.get('LOCALES')]
         if current_user.is_authenticated():
             lang = current_user.locale
         else:
             lang = request.cookies.get('language')
         if (lang is None or lang == '' or
-            lang.lower() not in locales):
-            lang = request.accept_languages.best_match(locales)
-        if (lang is None or lang == '' or
-                lang.lower() not in locales):
-            lang = app.config.get('DEFAULT_LOCALE') or 'en'
+                lang.lower() not in app.config['LOCALES']):
+            lang = 'en'
         return lang.lower()
     return babel
 
@@ -263,7 +295,6 @@ def setup_blueprints(app):
     from pybossa.view.help import blueprint as helper
     from pybossa.view.home import blueprint as home
     from pybossa.view.uploads import blueprint as uploads
-    from pybossa.view.amazon import blueprint as amazon
 
     blueprints = [{'handler': home, 'url_prefix': '/'},
                   {'handler': api,  'url_prefix': '/api'},
@@ -274,12 +305,13 @@ def setup_blueprints(app):
                   {'handler': helper, 'url_prefix': '/help'},
                   {'handler': stats, 'url_prefix': '/stats'},
                   {'handler': uploads, 'url_prefix': '/uploads'},
-                  {'handler': amazon, 'url_prefix': '/amazon'},
                   ]
 
     for bp in blueprints:
         app.register_blueprint(bp['handler'], url_prefix=bp['url_prefix'])
 
+    # The RQDashboard is actually registering a blueprint to the app, so this is
+    # a propper place for it to be initialized
     from rq_dashboard import RQDashboard
     RQDashboard(app, url_prefix='/admin/rq', auth_handler=current_user,
                 redis_conn=sentinel.master)
@@ -287,16 +319,6 @@ def setup_blueprints(app):
 
 def setup_external_services(app):
     """Setup external services."""
-    setup_twitter_login(app)
-    setup_facebook_login(app)
-    setup_google_login(app)
-    setup_flickr_importer(app)
-    setup_dropbox_importer(app)
-    setup_twitter_importer(app)
-    setup_youtube_importer(app)
-
-
-def setup_twitter_login(app):
     try:  # pragma: no cover
         if (app.config['TWITTER_CONSUMER_KEY'] and
                 app.config['TWITTER_CONSUMER_SECRET']):
@@ -309,10 +331,9 @@ def setup_twitter_login(app):
         print inst
         print "Twitter signin disabled"
         log_message = 'Twitter signin disabled: %s' % str(inst)
-        app.logger.info(log_message)
+        app.logger.error(log_message)
 
-
-def setup_facebook_login(app):
+    # Enable Facebook if available
     try:  # pragma: no cover
         if (app.config['FACEBOOK_APP_ID']
                 and app.config['FACEBOOK_APP_SECRET']):
@@ -325,10 +346,9 @@ def setup_facebook_login(app):
         print inst
         print "Facebook signin disabled"
         log_message = 'Facebook signin disabled: %s' % str(inst)
-        app.logger.info(log_message)
+        app.logger.error(log_message)
 
-
-def setup_google_login(app):
+    # Enable Google if available
     try:  # pragma: no cover
         if (app.config['GOOGLE_CLIENT_ID']
                 and app.config['GOOGLE_CLIENT_SECRET']):
@@ -341,28 +361,24 @@ def setup_google_login(app):
         print inst
         print "Google signin disabled"
         log_message = 'Google signin disabled: %s' % str(inst)
-        app.logger.info(log_message)
+        app.logger.error(log_message)
 
-
-def setup_flickr_importer(app):
+    # Enable Flickr if available
     try:  # pragma: no cover
         if (app.config['FLICKR_API_KEY']
                 and app.config['FLICKR_SHARED_SECRET']):
             flickr.init_app(app)
             from pybossa.view.flickr import blueprint as flickr_bp
             app.register_blueprint(flickr_bp, url_prefix='/flickr')
-            importer_params = {'api_key': app.config['FLICKR_API_KEY']}
-            importer.register_flickr_importer(importer_params)
     except Exception as inst:  # pragma: no cover
         print type(inst)
         print inst.args
         print inst
         print "Flickr importer not available"
         log_message = 'Flickr importer not available: %s' % str(inst)
-        app.logger.info(log_message)
+        app.logger.error(log_message)
 
-
-def setup_dropbox_importer(app):
+    # Enable Dropbox if available
     try:  # pragma: no cover
         if app.config['DROPBOX_APP_KEY']:
             importer.register_dropbox_importer()
@@ -372,40 +388,8 @@ def setup_dropbox_importer(app):
         print inst
         print "Dropbox importer not available"
         log_message = 'Dropbox importer not available: %s' % str(inst)
-        app.logger.info(log_message)
+        app.logger.error(log_message)
 
-
-def setup_twitter_importer(app):
-    try:  # pragma: no cover
-        if (app.config['TWITTER_CONSUMER_KEY'] and
-                app.config['TWITTER_CONSUMER_SECRET']):
-            importer_params = {
-                'consumer_key': app.config['TWITTER_CONSUMER_KEY'],
-                'consumer_secret': app.config['TWITTER_CONSUMER_SECRET']
-            }
-            importer.register_twitter_importer(importer_params)
-    except Exception as inst:  # pragma: no cover
-        print type(inst)
-        print inst.args
-        print inst
-        print "Twitter importer not available"
-        log_message = 'Twitter importer not available: %s' % str(inst)
-        app.logger.info(log_message)
-
-def setup_youtube_importer(app):
-    try:  # pragma: no cover
-        if app.config['YOUTUBE_API_SERVER_KEY']:
-            importer_params = {
-                'youtube_api_server_key': app.config['YOUTUBE_API_SERVER_KEY']
-            }
-            importer.register_youtube_importer(importer_params)
-    except Exception as inst:  # pragma: no cover
-        print type(inst)
-        print inst.args
-        print inst
-        print "Youtube importer not available"
-        log_message = 'Youtube importer not available: %s' % str(inst)
-        app.logger.info(log_message)
 
 def setup_geocoding(app):
     """Setup geocoding."""
@@ -476,19 +460,10 @@ def setup_hooks(app):
 
     @app.context_processor
     def _global_template_context():
-        notify_admin = False
         if current_user and current_user.is_authenticated():
             if current_user.email_addr == current_user.name:
                 flash(gettext("Please update your e-mail address in your"
                       " profile page, right now it is empty!"), 'error')
-        if (current_user and current_user.is_authenticated()
-            and current_user.admin):
-            key = NEWS_FEED_KEY + str(current_user.id)
-            if sentinel.slave.get(key):
-                notify_admin = True
-            news = get_news()
-        else:
-            news = None
 
         # Cookies warning
         cookie_name = app.config['BRAND'] + "_accept_cookies"
@@ -518,9 +493,6 @@ def setup_hooks(app):
         else:
             contact_twitter = 'PyBossa'
 
-        # Available plugins
-        plugins = plugin_manager.plugins
-
         return dict(
             brand=app.config['BRAND'],
             title=app.config['TITLE'],
@@ -535,10 +507,7 @@ def setup_hooks(app):
             show_cookies_warning=show_cookies_warning,
             contact_email=contact_email,
             contact_twitter=contact_twitter,
-            upload_method=app.config['UPLOAD_METHOD'],
-            news=news,
-            notify_admin=notify_admin,
-            plugins=plugins)
+            upload_method=app.config['UPLOAD_METHOD'])
 
 
 def setup_jinja2_filters(app):
@@ -546,10 +515,6 @@ def setup_jinja2_filters(app):
     @app.template_filter('pretty_date')
     def _pretty_date_filter(s):
         return pretty_date(s)
-
-    @app.template_filter('humanize_intword')
-    def _humanize_intword(obj):
-        return humanize.intword(obj)
 
 
 def setup_csrf_protection(app):
@@ -607,7 +572,7 @@ def setup_scheduled_jobs(app):  # pragma: no cover
     JOBS = [dict(name=enqueue_periodic_jobs, args=['super'], kwargs={},
                  interval=(10 * MINUTE), timeout=(10 * MINUTE)),
             dict(name=enqueue_periodic_jobs, args=['high'], kwargs={},
-                 interval=(1 * HOUR), timeout=(10 * MINUTE)),
+                 interval=HOUR, timeout=(10 * MINUTE)),
             dict(name=enqueue_periodic_jobs, args=['medium'], kwargs={},
                  interval=(12 * HOUR), timeout=(10 * MINUTE)),
             dict(name=enqueue_periodic_jobs, args=['low'], kwargs={},
@@ -626,9 +591,3 @@ def setup_newsletter(app):
     """Setup mailchimp newsletter."""
     if app.config.get('MAILCHIMP_API_KEY'):
         newsletter.init_app(app)
-
-
-def setup_assets(app):
-    """Setup assets."""
-    from flask.ext.assets import Environment
-    assets = Environment(app)

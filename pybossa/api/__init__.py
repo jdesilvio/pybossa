@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2013 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -26,11 +26,12 @@ This package adds GET, POST, PUT and DELETE methods for:
     * users,
     * global_stats,
     * vmcp
+    * completedtasks
+    * completedtaskruns
 
 """
 
 import json
-import jwt
 from flask import Blueprint, request, abort, Response, make_response
 from flask.ext.login import current_user
 from werkzeug.exceptions import NotFound
@@ -50,10 +51,9 @@ from category import CategoryAPI
 from vmcp import VmcpAPI
 from user import UserAPI
 from token import TokenAPI
-from result import ResultAPI
 from pybossa.core import project_repo, task_repo
-from pybossa.contributions_guard import ContributionsGuard
-from pybossa.auth import jwt_authorize_project
+from completed_task import CompletedTaskAPI
+from completed_task_run import CompletedTaskRunAPI
 
 blueprint = Blueprint('api', __name__)
 
@@ -94,13 +94,13 @@ register_api(ProjectAPI, 'api_project', '/project', pk='oid', pk_type='int')
 register_api(CategoryAPI, 'api_category', '/category', pk='oid', pk_type='int')
 register_api(TaskAPI, 'api_task', '/task', pk='oid', pk_type='int')
 register_api(TaskRunAPI, 'api_taskrun', '/taskrun', pk='oid', pk_type='int')
-register_api(ResultAPI, 'api_result', '/result', pk='oid', pk_type='int')
 register_api(UserAPI, 'api_user', '/user', pk='oid', pk_type='int')
 register_api(GlobalStatsAPI, 'api_globalstats', '/globalstats',
              pk='oid', pk_type='int')
 register_api(VmcpAPI, 'api_vmcp', '/vmcp', pk='oid', pk_type='int')
 register_api(TokenAPI, 'api_token', '/token', pk='token', pk_type='string')
-
+register_api(CompletedTaskAPI, 'api_completedtask', '/completedtask', pk='oid', pk_type='int')
+register_api(CompletedTaskRunAPI, 'api_completedtaskrun', '/completedtaskrun', pk='oid', pk_type='int')
 
 @jsonpify
 @blueprint.route('/app/<project_id>/newtask')
@@ -112,14 +112,9 @@ def new_task(project_id):
     # Check if the request has an arg:
     try:
         task = _retrieve_new_task(project_id)
-
-        if type(task) is Response:
-            return task
-
         # If there is a task for the user, return it
         if task is not None:
-            guard = ContributionsGuard(sentinel.master)
-            guard.stamp(task, get_user_id_or_ip())
+            mark_task_as_requested_by_user(task, sentinel.master)
             response = make_response(json.dumps(task.dictize()))
             response.mimetype = "application/json"
             return response
@@ -127,39 +122,33 @@ def new_task(project_id):
     except Exception as e:
         return error.format_exception(e, target='project', action='GET')
 
-
 def _retrieve_new_task(project_id):
-
     project = project_repo.get(project_id)
-
     if project is None:
         raise NotFound
-
     if not project.allow_anonymous_contributors and current_user.is_anonymous():
         info = dict(
             error="This project does not allow anonymous contributors")
         error = model.task.Task(info=info)
         return error
-
-    if request.args.get('external_uid'):
-        resp = jwt_authorize_project(project,
-                                     request.headers.get('Authorization'))
-        if resp != True:
-            return resp
-
     if request.args.get('offset'):
         offset = int(request.args.get('offset'))
     else:
         offset = 0
     user_id = None if current_user.is_anonymous() else current_user.id
     user_ip = request.remote_addr if current_user.is_anonymous() else None
-    external_uid = request.args.get('external_uid')
-    task = sched.new_task(project_id, project.info.get('sched'),
-                          user_id,
-                          user_ip,
-                          external_uid,
-                          offset)
+    task = sched.new_task(project_id, project.info.get('sched'), user_id, user_ip, offset)
+    #print task
     return task
+
+#def _set_task_run_created_time():
+#    pass
+
+def mark_task_as_requested_by_user(task, redis_conn):
+    usr = get_user_id_or_ip()['user_id'] or get_user_id_or_ip()['user_ip']
+    key = 'pybossa:task_requested:user:%s:task:%s' % (usr, task.id)
+    timeout = 60 * 60
+    redis_conn.setex(key, timeout, True)
 
 
 @jsonpify
@@ -200,25 +189,3 @@ def user_progress(project_id=None, short_name=None):
             return abort(404)
     else:  # pragma: no cover
         return abort(404)
-
-
-@jsonpify
-@blueprint.route('/auth/project/<short_name>/token')
-@crossdomain(origin='*', headers=cors_headers)
-@ratelimit(limit=ratelimits.get('LIMIT'), per=ratelimits.get('PER'))
-def auth_jwt_project(short_name):
-    """Create a JWT for a project via its secret KEY."""
-    project_secret_key = None
-    if 'Authorization' in request.headers:
-        project_secret_key = request.headers.get('Authorization')
-    if project_secret_key:
-        project = project_repo.get_by_shortname(short_name)
-        if project and project.secret_key == project_secret_key:
-            token = jwt.encode({'short_name': short_name,
-                                'project_id': project.id},
-                               project.secret_key, algorithm='HS256')
-            return token
-        else:
-            return abort(404)
-    else:
-        return abort(403)

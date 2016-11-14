@@ -1,7 +1,7 @@
 # -*- coding: utf8 -*-
 # This file is part of PyBossa.
 #
-# Copyright (C) 2015 SciFabric LTD.
+# Copyright (C) 2013 SF Isle of Man Limited
 #
 # PyBossa is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -19,12 +19,10 @@
 from sqlalchemy import Integer, Boolean, Unicode, Text, String, BigInteger
 from sqlalchemy.schema import Column, ForeignKey
 from sqlalchemy.orm import relationship, backref
-from sqlalchemy.dialects.postgresql import JSON
-from sqlalchemy.ext.mutable import MutableDict
 from flask.ext.login import UserMixin
 
 from pybossa.core import db, signer
-from pybossa.model import DomainObject, make_timestamp, make_uuid
+from pybossa.model import DomainObject, make_timestamp, JSONEncodedDict, make_uuid
 from pybossa.model.project import Project
 from pybossa.model.task_run import TaskRun
 from pybossa.model.blogpost import Blogpost
@@ -60,7 +58,8 @@ class User(db.Model, DomainObject, UserMixin):
     valid_email = Column(Boolean, default=False)
     confirmation_email_sent = Column(Boolean, default=False)
     subscribed = Column(Boolean, default=True)
-    info = Column(MutableDict.as_mutable(JSON), default=dict())
+    info = Column(JSONEncodedDict, default=dict)
+    subadmin = Column(Boolean, default=False)
 
     ## Relationships
     task_runs = relationship(TaskRun, backref='user')
